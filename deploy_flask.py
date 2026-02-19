@@ -1,75 +1,63 @@
-import os
-import pickle
-import pandas as pd
 from flask import Flask, request, jsonify
+import joblib
+import pandas as pd
+import os
 
-# Initialize Flask app
 app = Flask(__name__)
 
-# -------------------------------
-# Load Models
-# -------------------------------
-MODEL_PATH = "models"
-
+models = {}
 model_files = {
-    "DecisionTree": "DecisionTree_model.pkl",
-    "GradientBoosting": "GradientBoosting_model.pkl",
-    "LogisticRegression": "LogisticRegression_model.pkl",
-    "RandomForest": "RandomForest_model.pkl",
+    "DecisionTree": os.path.join("models", "DecisionTree_model.pkl"),
+    "GradientBoosting": os.path.join("models", "GradientBoosting_model.pkl"),
+    "LogisticRegression": os.path.join("models", "LogisticRegression_model.pkl"),
+    "RandomForest": os.path.join("models", "RandomForest_model.pkl"),
 }
 
-models = {}
+load_errors = {}
 
-for name, file in model_files.items():
-    path = os.path.join(MODEL_PATH, file)
+for name, filepath in model_files.items():
     try:
-        with open(path, "rb") as f:
-            models[name] = pickle.load(f)
-        print(f"Loaded {name}")
+        models[name] = joblib.load(filepath)
+        print(f"Loaded {name} from {filepath}")
     except Exception as e:
+        load_errors[name] = f"{type(e).__name__}: {e}"
         print(f"Error loading {name}: {e}")
 
-
-# -------------------------------
-# Health Check Route
-# -------------------------------
 @app.route("/", methods=["GET"])
 def home():
-    return jsonify({"message": "Flask ML API is running 🚀"})
+    return jsonify({
+        "status": "ok",
+        "loaded_models": list(models.keys()),
+        "load_errors": load_errors
+    })
 
-
-# -------------------------------
-# Prediction Route
-# -------------------------------
 @app.route("/predict", methods=["POST"])
 def predict():
+    if not models:
+        return jsonify({
+            "error": "No models loaded on server",
+            "load_errors": load_errors
+        }), 500
 
-    input_data = request.get_json()
+    input_data = request.get_json(silent=True)
+    if not input_data:
+        return jsonify({"error": "No input data provided"}), 400
 
     sample = input_data.get("data")
     if sample is None:
         return jsonify({"error": "Key 'data' not found in JSON"}), 400
 
     try:
-        # Convert input to DataFrame
         df = pd.DataFrame(sample if isinstance(sample, list) else [sample])
     except Exception as e:
         return jsonify({"error": f"Invalid input data: {e}"}), 400
 
     predictions = {}
-
     for name, model in models.items():
         try:
             preds = model.predict(df)
             predictions[name] = preds.tolist()
         except Exception as e:
-            predictions[name] = f"Prediction error: {e}"
+            predictions[name] = f"{type(e).__name__}: {e}"
 
     return jsonify({"predictions": predictions})
-
-
-# -------------------------------
-# Run locally only
-# -------------------------------
-if __name__ == "__main__":
-    app.run(debug=True)
